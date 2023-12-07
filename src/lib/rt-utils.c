@@ -70,6 +70,7 @@ char *get_debugfileprefix(void)
 	if ((fp = fopen("/proc/mounts", "r")) == NULL)
 		goto out;
 
+#ifdef WASM_LD
 	while (fscanf(fp, "%*s %"
 		      STR(MAX_PATH)
 		      "s %99s %*s %*d %*d\n",
@@ -85,6 +86,7 @@ char *get_debugfileprefix(void)
 			break;
 		}
 	}
+#endif
 	fclose(fp);
 
 	if (!found) {
@@ -264,6 +266,7 @@ int event_disable(char *event)
 	return setevent(path, "0");
 }
 
+#ifdef WASM_LD
 int check_privs(void)
 {
 	int policy = sched_getscheduler(0);
@@ -293,6 +296,7 @@ int check_privs(void)
 	/* we're good; change back and return success */
 	return sched_setscheduler(0, policy, &old_param);
 }
+#endif
 
 const char *policy_to_string(int policy)
 {
@@ -332,10 +336,12 @@ uint32_t string_to_policy(const char *str)
 	return 0;
 }
 
+#ifdef WASM_LD
 pid_t gettid(void)
 {
 	return syscall(SYS_gettid);
 }
+#endif
 
 /*
  * parse an input value as a base10 value followed by an optional

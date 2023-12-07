@@ -31,9 +31,8 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include "rt_numa.h"
-
-#include "rt-utils.h"
 #include "rt-numa.h"
+#include "rt-utils.h"
 #include "rt-error.h"
 
 #include <bionic.h>
@@ -48,13 +47,16 @@
 #define SCHED_NORMAL SCHED_OTHER
 #endif
 
+#ifdef WASIX
 #define sigev_notify_thread_id _sigev_un._tid
+#endif
 
 #ifdef __UCLIBC__
 #define MAKE_PROCESS_CPUCLOCK(pid, clock) \
 	((~(clockid_t) (pid) << 3) | (clockid_t) (clock))
 #define CPUCLOCK_SCHED          2
 
+#ifdef WASIX
 static int clock_nanosleep(clockid_t clock_id, int flags, const struct timespec *req,
 			   struct timespec *rem)
 {
@@ -65,12 +67,15 @@ static int clock_nanosleep(clockid_t clock_id, int flags, const struct timespec 
 
 	return syscall(__NR_clock_nanosleep, clock_id, flags, req, rem);
 }
+#endif
 
+#ifdef WASIX
 int sched_setaffinity(__pid_t __pid, size_t __cpusetsize,
 		       __const cpu_set_t *__cpuset)
 {
 	return -EINVAL;
 }
+#endif
 
 #undef CPU_SET
 #undef CPU_ZERO
@@ -78,9 +83,11 @@ int sched_setaffinity(__pid_t __pid, size_t __cpusetsize,
 #define CPU_ZERO(cpusetp)
 
 #else
+#ifdef WASIX
 extern int clock_nanosleep(clockid_t __clock_id, int __flags,
 			   __const struct timespec *__req,
 			   struct timespec *__rem);
+#endif
 #endif	/* __UCLIBC__ */
 
 #define HIST_MAX		1000000
@@ -127,9 +134,9 @@ struct thread_param {
 struct thread_stat {
 	unsigned long cycles;
 	unsigned long cyclesread;
-	long min;
-	long max;
-	long act;
+	double min;
+	double max;
+	double act;
 	double avg;
 	long *values;
 	long *smis;
@@ -198,6 +205,9 @@ static int smi = 0;
 
 static pthread_cond_t refresh_on_max_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t refresh_on_max_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static pthread_cond_t wasm_wait_cond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t wasm_wait_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static pthread_mutex_t break_thread_id_lock = PTHREAD_MUTEX_INITIALIZER;
 static pid_t break_thread_id = 0;
@@ -285,6 +295,7 @@ enum {
 	ERROR_NOTFOUND	= -2,
 };
 
+#ifdef WASIX
 /*
  * Raise the soft priority limit up to prio, if that is less than or equal
  * to the hard limit
@@ -334,7 +345,9 @@ static int raise_soft_prio(int policy, const struct sched_param *param)
 
 	return err;
 }
+#endif
 
+#ifdef WASIX
 /*
  * Check the error status of sched_setscheduler
  * If an error can be corrected by raising the soft limit priority to
@@ -358,6 +371,7 @@ try_again:
 
 	return err;
 }
+#endif
 
 #ifdef ARCH_HAS_SMI_COUNTER
 static int open_msr_file(int cpu)
@@ -542,7 +556,9 @@ static int has_smi_counter(void)
 static void *timerthread(void *param)
 {
 	struct thread_param *par = param;
+#ifdef WASIX
 	struct sched_param schedp;
+#endif
 	struct sigevent sigev;
 	sigset_t sigset;
 	timer_t timer;
@@ -555,10 +571,13 @@ static void *timerthread(void *param)
 	pthread_t thread;
 	unsigned long smi_now, smi_old = 0;
 
+#ifdef WASIX
 	/* if we're running in numa mode, set our memory node */
 	if (par->node != -1)
 		rt_numa_set_numa_run_on_node(par->node, par->cpu);
+#endif
 
+#ifdef WASIX
 	if (par->cpu != -1) {
 		CPU_ZERO(&mask);
 		CPU_SET(par->cpu, &mask);
@@ -567,16 +586,20 @@ static void *timerthread(void *param)
 			warn("Could not set CPU affinity to CPU #%d\n",
 			     par->cpu);
 	}
+#endif
 
 	interval.tv_sec = par->interval / USEC_PER_SEC;
 	interval.tv_nsec = (par->interval % USEC_PER_SEC) * 1000;
 
+#ifdef WASIX
 	stat->tid = gettid();
+#endif
 
 	sigemptyset(&sigset);
 	sigaddset(&sigset, par->signal);
 	sigprocmask(SIG_BLOCK, &sigset, NULL);
 
+#ifdef WASIX
 	if (par->mode == MODE_CYCLIC) {
 		sigev.sigev_notify = SIGEV_THREAD_ID | SIGEV_SIGNAL;
 		sigev.sigev_signo = par->signal;
@@ -584,12 +607,15 @@ static void *timerthread(void *param)
 		timer_create(par->clock, &sigev, &timer);
 		tspec.it_interval = interval;
 	}
+#endif
 
+#ifdef WASIX
 	memset(&schedp, 0, sizeof(schedp));
 	schedp.sched_priority = par->prio;
 	if (setscheduler(0, par->policy, &schedp))
 		fatal("timerthread%d: failed to set priority to %d\n",
 		      par->cpu, par->prio);
+#endif
 
 	if (smi) {
 		par->msr_fd = open_msr_file(par->cpu);
@@ -638,6 +664,7 @@ static void *timerthread(void *param)
 		stop = now;
 		stop.tv_sec += duration;
 	}
+#ifdef WASIX
 	if (par->mode == MODE_CYCLIC) {
 		if (par->timermode == TIMER_ABSTIME)
 			tspec.it_value = next;
@@ -645,6 +672,7 @@ static void *timerthread(void *param)
 			tspec.it_value = interval;
 		timer_settime(timer, par->timermode, &tspec, NULL);
 	}
+#endif
 
 	if (par->mode == MODE_SYS_ITIMER) {
 		itimer.it_interval.tv_sec = interval.tv_sec;
@@ -657,9 +685,11 @@ static void *timerthread(void *param)
 
 	while (!shutdown) {
 
-		uint64_t diff;
+		double diff;
 		unsigned long diff_smi = 0;
 		int sigs, ret;
+
+
 
 		/* Wait for next period */
 		switch (par->mode) {
@@ -671,6 +701,8 @@ static void *timerthread(void *param)
 
 		case MODE_CLOCK_NANOSLEEP:
 			if (par->timermode == TIMER_ABSTIME) {
+				printf("sleeping...");
+				fflush(stdout);
 				ret = clock_nanosleep(par->clock, TIMER_ABSTIME,
 						      &next, NULL);
 				if (ret != 0) {
@@ -680,16 +712,16 @@ static void *timerthread(void *param)
 				}
 			} else {
 				ret = clock_gettime(par->clock, &now);
+				printf("(%lu) clock_gettime before clock_nanosleep now: sec:%lld nsec:%ld\n", stat->cycles, now.tv_sec, now.tv_nsec);
+				fflush(stdout);
 				if (ret != 0) {
-					if (ret != EINTR)
-						warn("clock_gettime() failed: %s", strerror(errno));
+					warn("clock_gettime() failed: %s", strerror(errno));
 					goto out;
 				}
 				ret = clock_nanosleep(par->clock,
 					TIMER_RELTIME, &interval, NULL);
 				if (ret != 0) {
-					if (ret != EINTR)
-						warn("clock_nanosleep() failed. errno: %d\n", errno);
+					warn("clock_nanosleep() failed. errno: %d\n", errno);
 					goto out;
 				}
 				next.tv_sec = now.tv_sec + interval.tv_sec;
@@ -699,14 +731,16 @@ static void *timerthread(void *param)
 			break;
 
 		case MODE_SYS_NANOSLEEP:
+			interval.tv_sec = 1;
 			ret = clock_gettime(par->clock, &now);
+			//printf("(%lu) clock_gettime before nanosleep now: sec:%lld nsec:%ld\n", stat->cycles, now.tv_sec, now.tv_nsec);
+			//fflush(stdout);
 			if (ret != 0) {
 				if (ret != EINTR)
 					warn("clock_gettime() failed: errno %d\n", errno);
 				goto out;
 			}
 			if (nanosleep(&interval, NULL)) {
-				if (errno != EINTR)
 					warn("nanosleep failed. errno: %d\n",
 					     errno);
 				goto out;
@@ -717,6 +751,8 @@ static void *timerthread(void *param)
 			break;
 		}
 		ret = clock_gettime(par->clock, &now);
+		//printf("(%lu) clock_gettime after nanosleep now: sec:%lld nsec:%ld next: sec:%lld nsec:%ld\n",stat->cycles, now.tv_sec, now.tv_nsec, next.tv_sec, next.tv_nsec);
+		//fflush(stdout);
 		if (ret != 0) {
 			if (ret != EINTR)
 				warn("clock_gettime() failed. errno: %d\n",
@@ -746,6 +782,8 @@ static void *timerthread(void *param)
 			if (refresh_on_max)
 				pthread_cond_signal(&refresh_on_max_cond);
 		}
+		if (!refresh_on_max)
+			pthread_cond_signal(&wasm_wait_cond);
 		stat->avg += (double) diff;
 
 		if (trigger && (diff > trigger))
@@ -768,33 +806,45 @@ static void *timerthread(void *param)
 		}
 		stat->act = diff;
 
+#if 0
+		printf("(%lu) timerthread: act: %lf\n", stat->cycles, stat->act); // confirmed working
+		int i;
+		for (i = 0; i < 1; i++)
+			print_stat(stderr, par, i, 0, 0);
+		fflush(stdout);
+#endif
+
 		if (par->bufmsk) {
 			stat->values[stat->cycles & par->bufmsk] = diff;
 			if (smi)
 				stat->smis[stat->cycles & par->bufmsk] = diff_smi;
 		}
 
+//#ifdef WASIX /* diff is double type */
 		/* Update the histogram */
 		if (histogram) {
-			if (diff >= histogram) {
+			if ((uint64_t)diff >= histogram) {
 				stat->hist_overflow++;
 				if (stat->num_outliers < histogram)
 					stat->outliers[stat->num_outliers++] = stat->cycles;
 			} else {
-				stat->hist_array[diff]++;
+				stat->hist_array[(uint64_t)diff]++;
 			}
 		}
+//#endif
 
 		stat->cycles++;
 
 		next.tv_sec += interval.tv_sec;
 		next.tv_nsec += interval.tv_nsec;
+#ifdef WASIX
 		if (par->mode == MODE_CYCLIC) {
 			int overrun_count = timer_getoverrun(timer);
 			next.tv_sec += overrun_count * interval.tv_sec;
 			next.tv_nsec += overrun_count * interval.tv_nsec;
 		}
 		tsnorm(&next);
+#endif
 
 		while (tsgreater(&now, &next)) {
 			next.tv_sec += interval.tv_sec;
@@ -818,8 +868,10 @@ out:
 		pthread_mutex_unlock(&refresh_on_max_lock);
 	}
 
+#ifdef WASIX
 	if (par->mode == MODE_CYCLIC)
 		timer_delete(timer);
+#endif
 
 	if (par->mode == MODE_SYS_ITIMER) {
 		itimer.it_value.tv_sec = 0;
@@ -832,9 +884,11 @@ out:
 	/* close msr file */
 	if (smi)
 		close(par->msr_fd);
+#ifdef WASIX
 	/* switch to normal */
 	schedp.sched_priority = 0;
 	sched_setscheduler(0, SCHED_OTHER, &schedp);
+#endif
 	stat->threadstarted = -1;
 
 	return NULL;
@@ -1067,7 +1121,10 @@ static void process_options(int argc, char *argv[], int max_cpus)
 			/* smp sets AFFINITY_USEALL in OPT_SMP */
 			if (smp)
 				break;
+#ifdef WASIX
 			numa = numa_initialize();
+#endif
+#ifdef WASIX
 			if (optarg) {
 				parse_cpumask(optarg, max_cpus, &affinity_mask);
 				setaffinity = AFFINITY_SPECIFIED;
@@ -1080,14 +1137,19 @@ static void process_options(int argc, char *argv[], int max_cpus)
 				parse_cpumask(argv[optind], max_cpus, &affinity_mask);
 				setaffinity = AFFINITY_SPECIFIED;
 			} else {
+#endif
 				setaffinity = AFFINITY_USEALL;
+#ifdef WASIX
 			}
+#endif
 
 			if (setaffinity == AFFINITY_SPECIFIED && !affinity_mask)
 				display_help(1);
+#ifdef WASIX
 			if (verbose && affinity_mask)
 				printf("Using %u cpus.\n",
 					numa_bitmask_weight(affinity_mask));
+#endif
 			break;
 		case 'A':
 		case OPT_ALIGNED:
@@ -1141,6 +1203,7 @@ static void process_options(int argc, char *argv[], int max_cpus)
 		case OPT_LOOPS:
 			max_cycles = atoi(optarg); break;
 		case OPT_MAINAFFINITY:
+#ifdef WASIX
 			if (optarg) {
 				parse_cpumask(optarg, max_cpus, &main_affinity_mask);
 			} else if (optind < argc &&
@@ -1150,6 +1213,7 @@ static void process_options(int argc, char *argv[], int max_cpus)
 				parse_cpumask(argv[optind], max_cpus, &main_affinity_mask);
 			}
 			break;
+#endif
 		case 'm':
 		case OPT_MLOCKALL:
 			lockall = 1; break;
@@ -1191,8 +1255,10 @@ static void process_options(int argc, char *argv[], int max_cpus)
 			use_system = MODE_SYS_OFFSET; break;
 		case 'S':
 		case OPT_SMP: /* SMP testing */
+#ifdef WASIX
 			if (numa)
 				fatal("numa and smp options are mutually exclusive\n");
+#endif
 			smp = 1;
 			num_threads = -1; /* update after parsing */
 			setaffinity = AFFINITY_USEALL;
@@ -1264,10 +1330,12 @@ static void process_options(int argc, char *argv[], int max_cpus)
 		use_nanosleep = MODE_CLOCK_NANOSLEEP;
 	}
 
+#ifdef WASIX
 	/* if smp wasn't requested, test for numa automatically */
 	if (!smp) {
 		numa = numa_initialize();
 	}
+#endif
 
 	if (option_affinity) {
 		if (smp)
@@ -1308,8 +1376,10 @@ static void process_options(int argc, char *argv[], int max_cpus)
 	if (priority < 0 || priority > 99)
 		error = 1;
 
+#ifdef WASIX
 	if (num_threads == -1)
 		num_threads = get_available_cpus(affinity_mask);
+#endif
 
 	if (priospread && priority == 0) {
 		fprintf(stderr, "defaulting realtime priority to %d\n",
@@ -1339,8 +1409,10 @@ static void process_options(int argc, char *argv[], int max_cpus)
 		pthread_barrier_init(&align_barr, NULL, num_threads);
 	}
 	if (error) {
+#ifdef WASIX
 		if (affinity_mask)
 			rt_bitmask_free(affinity_mask);
+#endif
 		display_help(1);
 	}
 }
@@ -1449,7 +1521,7 @@ static void print_hist(struct thread_param *par[], int nthreads)
 	fprintf(fd, "\n");
 	fprintf(fd, "# Min Latencies:");
 	for (j = 0; j < nthreads; j++)
-		fprintf(fd, " %05lu", par[j]->stats->min);
+		fprintf(fd, " %05lf", par[j]->stats->min);
 	fprintf(fd, "\n");
 	fprintf(fd, "# Avg Latencies:");
 	for (j = 0; j < nthreads; j++)
@@ -1459,7 +1531,7 @@ static void print_hist(struct thread_param *par[], int nthreads)
 	fprintf(fd, "# Max Latencies:");
 	maxmax = 0;
 	for (j = 0; j < nthreads; j++) {
-		fprintf(fd, " %05lu", par[j]->stats->max);
+		fprintf(fd, " %05lf", par[j]->stats->max);
 		if (par[j]->stats->max > maxmax)
 			maxmax = par[j]->stats->max;
 	}
@@ -1507,10 +1579,10 @@ static void print_stat(FILE *fp, struct thread_param *par, int index, int verbos
 			char *fmt;
 			if (use_nsecs)
 				fmt = "T:%2d (%5d) P:%2d I:%ld C:%7lu "
-				        "Min:%7ld Act:%8ld Avg:%8ld Max:%8ld";
+				        "Min:%7lf Act:%8lf Avg:%8lf Max:%8lf";
 			else
 				fmt = "T:%2d (%5d) P:%2d I:%ld C:%7lu "
-				        "Min:%7ld Act:%5ld Avg:%5ld Max:%8ld";
+				        "Min:%7lf Act:%5lf Avg:%lf Max:%8lf";
 
 			fprintf(fp, fmt, index, stat->tid, par->prio,
 				par->interval, stat->cycles, stat->min,
@@ -1566,7 +1638,7 @@ static void rstat_print_stat(struct thread_param *par, int index, int verbose, i
 				        "Min:%7ld Act:%8ld Avg:%8ld Max:%8ld";
 			else
 				fmt = "T:%2d (%5d) P:%2d I:%ld C:%7lu "
-				        "Min:%7ld Act:%5ld Avg:%5ld Max:%8ld";
+				        "Min:%7ld Act:%5ld Avg:%lf Max:%8ld";
 
 			dprintf(fd, fmt, index, stat->tid, par->prio,
 				par->interval, stat->cycles, stat->min,
@@ -1609,7 +1681,7 @@ static void rstat_print_stat(struct thread_param *par, int index, int verbose, i
 	}
 }
 
-
+#ifdef WASIX
 /*
  * thread that creates a named fifo and hands out run stats when someone
  * reads from the fifo.
@@ -1642,6 +1714,7 @@ static void *fifothread(void *param)
 	unlink(fifopath);
 	return NULL;
 }
+#endif
 
 static int trigger_init()
 {
@@ -1697,6 +1770,7 @@ static void trigger_update(struct thread_param *par, int diff, int64_t ts)
 	pthread_mutex_unlock(&trigger_lock);
 }
 
+#ifdef WASIX
 /* Running status shared memory open */
 static int rstat_shm_open(void)
 {
@@ -1724,6 +1798,7 @@ static int rstat_shm_open(void)
 
 	return fd;
 }
+#endif
 
 static int rstat_ftruncate(int fd, off_t len)
 {
@@ -1750,6 +1825,7 @@ static void *rstat_mmap(int fd)
 	return mptr;
 }
 
+#ifdef WASIX
 static int rstat_mlock(void *mptr)
 {
 	int err;
@@ -1761,7 +1837,9 @@ static int rstat_mlock(void *mptr)
 
 	return err;
 }
+#endif
 
+#ifdef WASIX
 static void rstat_setup(void)
 {
 	int res;
@@ -1794,6 +1872,7 @@ rstat_err:
 	rstat_fd = -1;
 	return;
 }
+#endif
 
 static void write_stats(FILE *f, void *data)
 {
@@ -1820,8 +1899,8 @@ static void write_stats(FILE *f, void *data)
 			fprintf(f, "\n");
 		fprintf(f, "      },\n");
 		fprintf(f, "      \"cycles\": %ld,\n", s->cycles);
-		fprintf(f, "      \"min\": %ld,\n", s->min);
-		fprintf(f, "      \"max\": %ld,\n", s->max);
+		fprintf(f, "      \"min\": %lf,\n", s->min);
+		fprintf(f, "      \"max\": %lf,\n", s->max);
 		fprintf(f, "      \"avg\": %.2f,\n", s->avg/s->cycles);
 		fprintf(f, "      \"cpu\": %d,\n", par[i]->cpu);
 		fprintf(f, "      \"node\": %d\n", par[i]->node);
@@ -1835,10 +1914,15 @@ static void set_main_thread_affinity(struct bitmask *cpumask)
 	int res;
 
 	errno = 0;
+#ifdef WASIX
 	res = numa_sched_setaffinity(getpid(), cpumask);
+#endif
+#ifdef WASIX
+	res = sched_setaffinity(getpid(), cpumask);
 	if (res != 0)
 		warn("Couldn't setaffinity in main thread: %s\n",
 		     strerror(errno));
+#endif
 }
 
 int main(int argc, char **argv)
@@ -1852,11 +1936,15 @@ int main(int argc, char **argv)
 	int i, ret = -1;
 	int status;
 
+#ifdef WASIX
 	rt_init(argc, argv);
+#endif
 	process_options(argc, argv, max_cpus);
 
+#ifdef WASIX
 	if (check_privs())
 		exit(EXIT_FAILURE);
+#endif
 
 	if (verbose) {
 		printf("Max CPUs = %d\n", max_cpus);
@@ -1865,9 +1953,11 @@ int main(int argc, char **argv)
 
 	if (affinity_mask != NULL) {
 		set_main_thread_affinity(affinity_mask);
+#ifdef WASIX
 		if (verbose)
 			printf("Using %u cpus.\n",
 				numa_bitmask_weight(affinity_mask));
+#endif
 	}
 
 	if (trigger) {
@@ -1879,12 +1969,14 @@ int main(int argc, char **argv)
 		}
 	}
 
+#ifdef WASIX
 	/* lock all memory (prevent swapping) */
 	if (lockall)
 		if (mlockall(MCL_CURRENT|MCL_FUTURE) == -1) {
 			perror("mlockall");
 			goto out;
 		}
+#endif
 
 	/* use the /dev/cpu_dma_latency trick if it's there */
 	set_latency_target();
@@ -2000,8 +2092,10 @@ int main(int argc, char **argv)
 	signal(SIGUSR1, sighand);
 	signal(SIGUSR2, sighand);
 
+#ifdef WASIX
 	/* Set-up shm */
 	rstat_setup();
+#endif
 
 	parameters = calloc(num_threads, sizeof(struct thread_param *));
 	if (!parameters)
@@ -2022,6 +2116,7 @@ int main(int argc, char **argv)
 
 		switch (setaffinity) {
 		case AFFINITY_UNSPECIFIED: cpu = -1; break;
+#ifdef WASIX
 		case AFFINITY_SPECIFIED:
 			cpu = cpu_for_thread_sp(i, max_cpus, affinity_mask);
 			if (verbose)
@@ -2030,10 +2125,12 @@ int main(int argc, char **argv)
 		case AFFINITY_USEALL:
 			cpu = cpu_for_thread_ua(i, max_cpus);
 			break;
+#endif
 		default: cpu = -1;
 		}
 
 		node = -1;
+#ifdef WASIX
 		if (numa) {
 			void *stack;
 			void *currstk;
@@ -2065,6 +2162,7 @@ int main(int argc, char **argv)
 				fatal("failed to set stack addr for thread %d to 0x%x\n",
 				      i, stack+stksize);
 		}
+#endif
 
 		/* allocate the thread's parameter block  */
 		parameters[i] = par = threadalloc(sizeof(struct thread_param), node);
@@ -2145,11 +2243,13 @@ int main(int argc, char **argv)
 	if (main_affinity_mask != NULL)
 		set_main_thread_affinity(main_affinity_mask);
 
+#ifdef WASIX
 	if (use_fifo) {
 		status = pthread_create(&fifo_threadid, NULL, fifothread, NULL);
 		if (status)
 			fatal("failed to create fifo thread: %s\n", strerror(status));
 	}
+#endif
 
 	while (!shutdown) {
 		char lavg[256];
@@ -2190,12 +2290,18 @@ int main(int argc, char **argv)
 		if (!verbose && !quiet)
 			printf("\033[%dA", num_threads + 2);
 
-		if (refresh_on_max) {
+		if(refresh_on_max) {
 			pthread_mutex_lock(&refresh_on_max_lock);
 			if (!shutdown)
 				pthread_cond_wait(&refresh_on_max_cond,
-						&refresh_on_max_lock);
+					&refresh_on_max_lock);
 			pthread_mutex_unlock(&refresh_on_max_lock);
+		} else {
+			pthread_mutex_lock(&wasm_wait_lock);
+			if (!shutdown)
+				pthread_cond_wait(&wasm_wait_cond,
+					&wasm_wait_lock);
+			pthread_mutex_unlock(&wasm_wait_lock);
 		}
 	}
 	ret = EXIT_SUCCESS;
@@ -2260,16 +2366,20 @@ int main(int argc, char **argv)
 	/* close any tracer file descriptors */
 	disable_trace_mark();
 
+#ifdef WASIX
 	/* unlock everything */
 	if (lockall)
 		munlockall();
+#endif
 
 	/* close the latency_target_fd if it's open */
 	if (latency_target_fd >= 0)
 		close(latency_target_fd);
 
+#ifdef WASIX
 	if (affinity_mask)
 		rt_bitmask_free(affinity_mask);
+#endif
 
 	/* Remove running status shared memory file if it exists */
 	if (rstat_fd >= 0)

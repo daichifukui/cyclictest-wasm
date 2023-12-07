@@ -1,37 +1,57 @@
 VERSION = 2.5
-CC = $(CROSS_COMPILE)gcc
-AR = $(CROSS_COMPILE)ar
+CC = /home/daichi/proj/00_research/wasi-sdk-20.0/bin/clang
+AR = /home/daichi/proj/00_research/wasi-sdk-20.0/bin/llvm-ar
 
 OBJDIR = bld
 
-sources = cyclictest.c \
-	  hackbench.c \
-	  pip_stress.c \
-	  pi_stress.c \
-	  pmqtest.c \
-	  ptsematest.c \
-	  rt-migrate-test.c \
-	  signaltest.c \
-	  sigwaittest.c \
-	  svsematest.c  \
-	  cyclicdeadline.c \
-	  deadline_test.c \
-	  queuelat.c \
-	  ssdd.c \
-	  oslat.c
+sources = cyclictest.c
 
 TARGETS = $(sources:.c=)
 LIBS	= -lrt -lpthread
 RTTESTLIB = -lrttest -L$(OBJDIR)
-EXTRA_LIBS ?= -ldl	# for get_cpu
-RTTESTNUMA = -lrttestnuma -lnuma
+EXTRA_LIBS ?= -ldl -lrt -lwasi-emulated-process-clocks -lwasi-emulated-mman	# for get_cpu
+//RTTESTNUMA = -lrttestnuma -lnuma
 DESTDIR	?=
 prefix  ?= /usr/local
 bindir  ?= $(prefix)/bin
 mandir	?= $(prefix)/share/man
 
-CFLAGS ?= -Wall -Wno-nonnull -Wextra
-CPPFLAGS += -D_GNU_SOURCE -Isrc/include
+CFLAGS ?=  --sysroot=/home/daichi/proj/00_research/wasix-libc/sysroot -Wall -Wno-nonnull -Wextra -D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_MMAN \
+         -O2 \
+         -matomics \
+         -mbulk-memory \
+         -mmutable-globals \
+         -pthread \
+         -mthread-model posix \
+         -ftls-model=local-exec \
+         -fno-trapping-math \
+         -D_WASI_EMULATED_SIGNAL \
+         -Wall \
+         -Wextra \
+         -Werror \
+         -Wno-unused-command-line-argument \
+         -Wno-null-pointer-arithmetic \
+         -Wno-unused-parameter \
+         -Wno-sign-compare \
+         -Wno-unused-variable \
+         -Wno-unused-function \
+         -Wno-ignored-attributes \
+         -Wno-missing-braces \
+         -Wno-ignored-pragmas \
+         -Wno-unused-but-set-variable \
+         -Wno-unknown-warning-option \
+         -Wno-parentheses \
+         -Wno-shift-op-parentheses \
+         -Wno-bitwise-op-parentheses \
+         -Wno-logical-op-parentheses \
+         -Wno-string-plus-int \
+         -Wno-dangling-else \
+         -Wno-unknown-pragmas \
+          -Wl,--shared-memory \
+          -Wl,--max-memory=4294967296 \
+          -Wl,--import-memory \
+          -Wl,--export-dynamic
+CPPFLAGS += -D_GNU_SOURCE -Isrc/include -I/home/daichi/proj/00_research/wasix-libc/sysroot/include
 LDFLAGS ?=
 
 PYLIB ?= $(shell python3 -m get_pylib)
@@ -177,11 +197,11 @@ oslat: $(OBJDIR)/oslat.o $(OBJDIR)/librttest.a $(OBJDIR)/librttestnuma.a
 %.8.bz2: %.8
 	bzip2 -c $< > $@
 
-LIBOBJS =$(addprefix $(OBJDIR)/,rt-error.o rt-get_cpu.o rt-sched.o rt-utils.o)
+LIBOBJS =$(addprefix $(OBJDIR)/,rt-error.o rt-utils.o)
 $(OBJDIR)/librttest.a: $(LIBOBJS)
 	$(AR) rcs $@ $^
 
-LIBNUMAOBJS =$(addprefix $(OBJDIR)/,rt-numa.o)
+//LIBNUMAOBJS =$(addprefix $(OBJDIR)/,rt-numa.o)
 $(OBJDIR)/librttestnuma.a: $(LIBNUMAOBJS)
 	$(AR) rcs $@ $^
 

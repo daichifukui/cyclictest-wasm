@@ -57,9 +57,9 @@ static inline int tsgreater(struct timespec *a, struct timespec *b)
 		(a->tv_sec == b->tv_sec && a->tv_nsec > b->tv_nsec));
 }
 
-static inline int64_t calcdiff(struct timespec t1, struct timespec t2)
+static inline double calcdiff(struct timespec t1, struct timespec t2)
 {
-	int64_t diff = USEC_PER_SEC * (long long)((int) t1.tv_sec - (int) t2.tv_sec);
+	double diff = USEC_PER_SEC * (double)((int) t1.tv_sec - (int) t2.tv_sec);
 	diff += ((int) t1.tv_nsec - (int) t2.tv_nsec) / 1000;
 	return diff;
 }

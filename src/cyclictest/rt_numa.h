@@ -15,14 +15,17 @@
 
 static int numa = 0;
 
+#ifdef NUMA
 #include <numa.h>
+#endif
 
 static void *
 threadalloc(size_t size, int node)
 {
-	if (node == -1)
-		return malloc(size);
+	return malloc(size);
+#ifdef NUMA
 	return numa_alloc_onnode(size, node);
+#endif
 }
 
 static void
@@ -30,10 +33,13 @@ threadfree(void *ptr, size_t size, int node)
 {
 	if (node == -1)
 		free(ptr);
+#ifdef NUMA
 	else
 		numa_free(ptr, size);
+#endif
 }
 
+#ifdef NUMA
 static void rt_numa_set_numa_run_on_node(int node, int cpu)
 {
 	int res;
@@ -81,5 +87,6 @@ static inline void rt_bitmask_free(struct bitmask *mask)
 {
 	numa_bitmask_free(mask);
 }
+#endif /* NUMA */
 
 #endif	/* _RT_NUMA_H */
