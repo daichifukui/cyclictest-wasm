@@ -2,6 +2,8 @@
 
 This repository contains some programs that test various rt-linux features.
 
+Refer to README-WASM.md for building cyclictest for WASM.
+
 ## Usage
 
 ### Compile
